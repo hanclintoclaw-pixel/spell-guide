@@ -322,7 +322,7 @@ select option {
 .spell-card,
 .roller-card,
 .history-entry {
-  overflow: hidden;
+  overflow: visible;
   border-radius: 20px;
   background: linear-gradient(145deg, rgba(20, 8, 34, 0.92), rgba(5, 25, 32, 0.72));
   padding: 1rem;
@@ -350,7 +350,7 @@ select option {
 }
 
 .citation-chip,
-.tags span {
+.tooltip-chip {
   border: 1px solid rgba(128, 255, 234, 0.22);
   border-radius: 999px;
   color: #80ffea;
@@ -364,12 +364,12 @@ select option {
 
 .stat-rack {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.5rem;
   margin: 0.85rem 0;
 }
 
-.stat-rack span {
+.tooltip-field {
   min-height: 4.4rem;
   border: 1px solid rgba(240, 92, 255, 0.2);
   border-radius: 16px;
@@ -377,6 +377,7 @@ select option {
   background: rgba(255, 255, 255, 0.035);
   padding: 0.65rem;
   font-size: 0.85rem;
+  outline: none;
 }
 
 .stat-rack b {
@@ -392,6 +393,53 @@ select option {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+}
+
+.tooltip-field,
+.tooltip-chip {
+  position: relative;
+  cursor: help;
+}
+
+.tooltip-field:focus,
+.tooltip-chip:focus {
+  border-color: rgba(128, 255, 234, 0.72);
+  box-shadow: 0 0 0 3px rgba(128, 255, 234, 0.12);
+}
+
+.tooltip-field::after,
+.tooltip-chip::after {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 0.55rem);
+  left: 50%;
+  width: min(22rem, calc(100vw - 2rem));
+  border: 1px solid rgba(128, 255, 234, 0.36);
+  border-radius: 14px;
+  color: #f7ecff;
+  background: linear-gradient(145deg, rgba(9, 5, 20, 0.98), rgba(15, 32, 42, 0.98));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42), 0 0 26px rgba(128, 255, 234, 0.14);
+  content: attr(data-tooltip);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.4;
+  opacity: 0;
+  padding: 0.75rem;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transform: translate(-50%, 0.35rem);
+  transition: opacity 140ms ease, transform 140ms ease;
+  white-space: normal;
+}
+
+.tooltip-field:hover::after,
+.tooltip-field:focus::after,
+.tooltip-chip:hover::after,
+.tooltip-chip:focus::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .roller-card + .roller-card {
@@ -498,5 +546,18 @@ button:disabled {
   .stat-rack,
   .mini-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tooltip-field::after,
+  .tooltip-chip::after {
+    left: 0;
+    transform: translate(0, 0.35rem);
+  }
+
+  .tooltip-field:hover::after,
+  .tooltip-field:focus::after,
+  .tooltip-chip:hover::after,
+  .tooltip-chip:focus::after {
+    transform: translate(0, 0);
   }
 }

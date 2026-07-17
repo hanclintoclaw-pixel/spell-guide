@@ -126,6 +126,111 @@ function extractVisibleText(html: string) {
   return normalizeText(doc.body.textContent ?? '')
 }
 
+const typeDescriptions: Record<string, string> = {
+  M: 'Mana spell. It affects minds, spirits, life force, or astral/magical nature. Mana spells generally do not affect purely nonliving objects unless the spell says otherwise.',
+  P: 'Physical spell. It creates or changes a physical effect in the material world and can often affect objects, devices, sensors, or bodies depending on the spell.',
+}
+
+const durationDescriptions: Record<string, string> = {
+  I: 'Instant. The spell effect resolves immediately when cast. Damage, healing, or other consequences may remain, but the spell itself is not sustained.',
+  S: 'Sustained. The caster must keep the spell going. In SR3, sustaining spells usually adds +2 target number per sustained spell to the caster’s other tests unless handled by a focus or other rule.',
+  P: 'Permanent. The caster sustains the spell until the effect sets; after the required time, the result becomes nonmagical and no longer needs sustaining.',
+}
+
+const targetTokenDescriptions: Record<string, string> = {
+  B: 'Body. The target usually resists with Body.',
+  W: 'Willpower. The target usually resists with Willpower.',
+  I: 'Intelligence. The target usually resists or is measured with Intelligence.',
+  F: 'Force. Used for spirits, barriers, spells, or magical effects where Force is the relevant rating.',
+  Q: 'Quickness. The target usually resists or is measured with Quickness.',
+  OR: 'Object Resistance. Use the SR3 object resistance target number for the object/material being affected.',
+  DT: 'Detection Table. Use the SR3 Detection Spell Table target number for the subject being detected.',
+}
+
+const markerDescriptions: Record<string, string> = {
+  R: 'Resisted. The target can make a Spell Resistance Test; successes reduce the caster’s successes.',
+  T: 'Threshold. The spell needs enough successes to exceed a threshold, often half the relevant target Attribute.',
+  V: 'Voluntary target. The spell is designed for willing subjects; unwilling use may not apply or may require GM handling.',
+  RC: 'Ranged Combat. Treat the spell like a ranged attack for the targeting step before resolving spell effects.',
+  A: 'Area effect. The spell can affect valid targets in an area instead of just one target.',
+  D: 'Directional sense. For detection spells, the granted sense works in a direction like sight or hearing.',
+}
+
+function explainType(type: string) {
+  return typeDescriptions[type] ?? 'Spell type from the SR3 table. Common values are M for Mana and P for Physical.'
+}
+
+function explainTarget(target: string) {
+  const parts: string[] = []
+  for (const [token, description] of Object.entries(targetTokenDescriptions)) {
+    const matcher = token.length === 1 ? new RegExp(`(^|[^A-Z])${token}([^A-Z]|$)`) : new RegExp(token)
+    if (matcher.test(target)) parts.push(description)
+  }
+  for (const [marker, description] of Object.entries(markerDescriptions)) {
+    if (target.includes(`(${marker})`) || target.includes(marker)) {
+      if ((marker === 'T' || marker === 'V') && !target.includes(`(${marker})`)) continue
+      parts.push(description)
+    }
+  }
+  if (target.includes('Essence')) parts.push('Essence-dependent. Cyberware/bioware loss can change the target number, commonly through 10 minus Essence.')
+  if (target.includes('Attribute')) parts.push('Attribute-dependent. Use the affected Attribute value as the listed target number context.')
+  if (target.includes('Damage Level')) parts.push('Damage-level variable. Use the wound, toxin, allergy, or spell damage level named in the spell.')
+  if (target.match(/^\d/)) parts.push('Fixed target number. Roll Sorcery against the listed number before resistance or other spell-specific handling.')
+  return parts.length > 0 ? parts.join(' ') : 'Target code from the SR3 spell table. Read letters as the Attribute/rating used, and parenthetical markers as resistance or special handling.'
+}
+
+function explainRange(range: string) {
+  const parts: string[] = []
+  if (range.includes('LOS')) parts.push('Line of Sight. The caster must be able to see the target with natural vision or valid optical aids under SR3 targeting rules.')
+  if (range.startsWith('T')) parts.push('Touch. The caster must touch the subject or target; touching an unwilling target may require a melee touch attack.')
+  if (range.includes('(A)') || range.endsWith('/A')) parts.push(markerDescriptions.A)
+  if (range.endsWith('/D')) parts.push(markerDescriptions.D)
+  if (range.includes('/A')) parts.push('Area sense. For detection spells, the granted sense detects in all directions around the subject.')
+  return parts.length > 0 ? parts.join(' ') : 'Range code from the SR3 spell table. LOS means line of sight; T means touch; (A) marks area effect.'
+}
+
+function explainDuration(duration: string) {
+  return durationDescriptions[duration] ?? 'Duration code from the SR3 spell table: I is Instant, S is Sustained, and P is Permanent.'
+}
+
+function explainDrain(drain: string) {
+  const parts = ['Drain is the fatigue/damage the caster resists after casting. The number modifier changes Drain Power, which is based on half Force rounded down; the letter in parentheses is the Drain Level.']
+  if (drain.includes('Damage Level')) parts.push('Variable Damage Level means the drain level depends on the damage level chosen, healed, or inflicted by the spell.')
+  if (/\([LMSD]\)/.test(drain)) parts.push('L/M/S/D are Light, Moderate, Serious, and Deadly drain levels.')
+  if (drain.includes('+')) parts.push('A plus modifier increases Drain Power before the caster resists drain.')
+  if (drain.includes('-')) parts.push('A minus modifier reduces Drain Power before the caster resists drain.')
+  return parts.join(' ')
+}
+
+function explainTag(tag: string) {
+  if (tag in markerDescriptions) return markerDescriptions[tag]
+  const tagDescriptions: Record<string, string> = {
+    area: markerDescriptions.A,
+    touch: 'Touch-range spell. The caster needs physical contact with the subject or target.',
+    sustained: durationDescriptions.S,
+    permanent: durationDescriptions.P,
+    resisted: markerDescriptions.R,
+    voluntary: markerDescriptions.V,
+    threshold: markerDescriptions.T,
+    'ranged combat': markerDescriptions.RC,
+    'object-specific': 'This is a spell family. Choose the specific object category when learning or casting the spell, such as Wreck Vehicle or Ram Door.',
+    'species-specific': 'This is a spell family. Choose the specific race or species when learning the spell, such as Slay Human or Slay Spirit.',
+  }
+  return tagDescriptions[tag] ?? `${tag} spell tag used for filtering and quick table reminders.`
+}
+
+function TooltipValue({ label, value, tooltip }: { label: string, value: string, tooltip: string }) {
+  return (
+    <span className="tooltip-field" tabIndex={0} data-tooltip={tooltip} aria-label={`${label}: ${value}. ${tooltip}`}>
+      <b>{label}</b>{value}
+    </span>
+  )
+}
+
+function TooltipChip({ children, tooltip }: { children: string, tooltip: string }) {
+  return <span className="tooltip-chip" tabIndex={0} data-tooltip={tooltip} aria-label={`${children}. ${tooltip}`}>{children}</span>
+}
+
 function App() {
   const [state, setState] = useState<SpellGuideState>(() => {
     try {
@@ -354,15 +459,16 @@ function SpellCard({ spell, action }: { spell: SpellRecord, action?: ReactNode }
         </div>
       </header>
       <div className="stat-rack">
-        <span><b>Target</b>{spell.target}</span>
-        <span><b>Range</b>{spell.range}</span>
-        <span><b>Duration</b>{spell.duration}</span>
-        <span><b>Drain</b>{spell.drain}</span>
+        <TooltipValue label="Type" value={spell.type} tooltip={explainType(spell.type)} />
+        <TooltipValue label="Target" value={spell.target} tooltip={explainTarget(spell.target)} />
+        <TooltipValue label="Range" value={spell.range} tooltip={explainRange(spell.range)} />
+        <TooltipValue label="Duration" value={spell.duration} tooltip={explainDuration(spell.duration)} />
+        <TooltipValue label="Drain" value={spell.drain} tooltip={explainDrain(spell.drain)} />
       </div>
       <p>{spell.summary}</p>
       <p className="source-line">Source: {spell.page}</p>
       <div className="tags">
-        {spell.tags.map((tag) => <span key={tag}>{tag}</span>)}
+        {spell.tags.map((tag) => <TooltipChip key={tag} tooltip={explainTag(tag)}>{tag}</TooltipChip>)}
       </div>
     </article>
   )
