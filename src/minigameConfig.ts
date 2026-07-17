@@ -1,10 +1,10 @@
 export const minigameConfig = {
-  appId: 'example-shadowrun-minigame',
-  appName: 'Example Shadowrun Minigame',
+  appId: 'spell-guide',
+  appName: 'Spell Guide',
   campaign: 'Nashville Shadowrun',
-  localStorageKey: 'cindylou.exampleShadowrunMinigame.v1',
-  submittedSnapshotKey: 'cindylou.exampleShadowrunMinigame.lastSubmitted.v1',
-  issueRepositoryUrl: 'https://github.com/hanclintoclaw-pixel/shadowrun-minigame-template/issues/new',
-  sourceRepository: 'hanclintoclaw-pixel/shadowrun-minigame-template',
+  localStorageKey: 'cindylou.spellGuide.v1',
+  submittedSnapshotKey: 'cindylou.spellGuide.lastSubmitted.v1',
+  issueRepositoryUrl: 'https://github.com/hanclintoclaw-pixel/spell-guide/issues/new',
+  sourceRepository: 'hanclintoclaw-pixel/spell-guide',
   wikiHubUrl: 'https://hanclintoclaw-pixel.github.io/campaign-wiki/Minigames.html',
 } as const

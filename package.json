@@ -1,10 +1,10 @@
 {
-  "name": "shadowrun-minigame-template",
+  "name": "spell-guide",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Static GitHub Pages template for Shadowrun minigames with local drafts and GitHub Issue persistence requests.",
-  "homepage": "https://hanclintoclaw-pixel.github.io/shadowrun-minigame-template/",
+  "description": "SR3 spell catalogue and Sorcery/Conjuring roller aid for the Nashville Shadowrun campaign",
+  "homepage": "https://hanclintoclaw-pixel.github.io/spell-guide/",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
