@@ -188,7 +188,7 @@ h3 {
 }
 
 .panel {
-  overflow: hidden;
+  overflow: visible;
   border-radius: 24px;
   background: rgba(11, 7, 20, 0.78);
   padding: clamp(1rem, 2vw, 1.35rem);
@@ -440,6 +440,33 @@ select option {
 .tooltip-chip:focus::after {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+.stat-rack .tooltip-field:nth-child(-n + 2)::after,
+.tags .tooltip-chip:nth-child(-n + 2)::after {
+  left: 0;
+  transform: translate(0, 0.35rem);
+}
+
+.stat-rack .tooltip-field:nth-child(-n + 2):hover::after,
+.stat-rack .tooltip-field:nth-child(-n + 2):focus::after,
+.tags .tooltip-chip:nth-child(-n + 2):hover::after,
+.tags .tooltip-chip:nth-child(-n + 2):focus::after {
+  transform: translate(0, 0);
+}
+
+.stat-rack .tooltip-field:nth-last-child(-n + 2)::after,
+.tags .tooltip-chip:nth-last-child(-n + 2)::after {
+  right: 0;
+  left: auto;
+  transform: translate(0, 0.35rem);
+}
+
+.stat-rack .tooltip-field:nth-last-child(-n + 2):hover::after,
+.stat-rack .tooltip-field:nth-last-child(-n + 2):focus::after,
+.tags .tooltip-chip:nth-last-child(-n + 2):hover::after,
+.tags .tooltip-chip:nth-last-child(-n + 2):focus::after {
+  transform: translate(0, 0);
 }
 
 .roller-card + .roller-card {
