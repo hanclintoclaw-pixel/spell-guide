@@ -8,6 +8,7 @@ import { loadLocalState, saveLocalState } from './persistence'
 declare const __SOURCE_COMMIT__: string
 
 type CalculatorMode = 'sorcery' | 'conjuring'
+type DrainLevel = 'L' | 'M' | 'S' | 'D'
 
 type MagicalStatKey =
   | 'sorcery'
@@ -38,23 +39,42 @@ interface MagicalStats {
 
 interface RollEntry {
   id: string
-  mode: CalculatorMode
+  mode: CalculatorMode | 'resistance' | 'drain'
   label: string
   dice: number[]
   targetNumber: number
   successes: number
   timestamp: string
+  spellName?: string
+  force?: number
+  note?: string
+}
+
+interface CastingWorkbench {
+  spellPoolToCast: number
+  spellPoolToDrain: number
+  castingTarget: number
+  castingModifiers: number
+  resistanceDice: number
+  resistanceTarget: number
+  drainDice: number
+  damageLevel: DrainLevel
+  lastCastingSuccesses: number | null
+  lastResistanceSuccesses: number | null
+  lastDrainSuccesses: number | null
 }
 
 interface SpellGuideState {
-  version: 3
+  version: 4
   query: string
   selectedCategory: 'All' | SpellCategory
   selectedSpellId: string
   pinnedSpellIds: string[]
   pinnedSpellForces: Record<string, number>
+  activeSustainedSpellIds: string[]
   importPageUrl: string
   magicalStats: MagicalStats
+  castingWorkbench: CastingWorkbench
   sorcery: RollInputs
   conjuring: RollInputs
   history: RollEntry[]
@@ -98,15 +118,31 @@ const seedMagicalStats: MagicalStats = {
   reaction: 0,
 }
 
+const seedCastingWorkbench: CastingWorkbench = {
+  spellPoolToCast: 0,
+  spellPoolToDrain: 0,
+  castingTarget: 4,
+  castingModifiers: 0,
+  resistanceDice: 0,
+  resistanceTarget: 4,
+  drainDice: 6,
+  damageLevel: 'M',
+  lastCastingSuccesses: null,
+  lastResistanceSuccesses: null,
+  lastDrainSuccesses: null,
+}
+
 const seedState: SpellGuideState = {
-  version: 3,
+  version: 4,
   query: '',
   selectedCategory: 'All',
   selectedSpellId: spellCatalogue[0]?.id ?? '',
   pinnedSpellIds: [],
   pinnedSpellForces: {},
+  activeSustainedSpellIds: [],
   importPageUrl: 'https://hanclintoclaw-pixel.github.io/campaign-wiki/PCs/Valgaut.html',
   magicalStats: seedMagicalStats,
+  castingWorkbench: seedCastingWorkbench,
   sorcery: {
     dicePool: 6,
     baseTarget: 4,
@@ -146,14 +182,16 @@ function isSpellGuideState(value: unknown): value is SpellGuideState {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<SpellGuideState>
   return (
-    candidate.version === 3
+    candidate.version === 4
     && typeof candidate.query === 'string'
     && typeof candidate.selectedCategory === 'string'
     && typeof candidate.selectedSpellId === 'string'
     && Array.isArray(candidate.pinnedSpellIds)
     && Boolean(candidate.pinnedSpellForces)
+    && Array.isArray(candidate.activeSustainedSpellIds)
     && typeof candidate.importPageUrl === 'string'
     && isMagicalStats(candidate.magicalStats)
+    && Boolean(candidate.castingWorkbench)
     && isRollInputs(candidate.sorcery)
     && isRollInputs(candidate.conjuring)
     && Array.isArray(candidate.history)
@@ -180,6 +218,60 @@ function successChance(targetNumber: number) {
 
 function expectedSuccesses(dicePool: number, targetNumber: number) {
   return clampInteger(dicePool, 1, 40) * successChance(targetNumber)
+}
+
+const drainLevels: DrainLevel[] = ['L', 'M', 'S', 'D']
+
+function parseDrainPowerModifier(drain: string) {
+  const match = drain.match(/([+-]\d+)/)
+  return match ? Number(match[1]) : 0
+}
+
+function drainPower(force: number, drain: string) {
+  return Math.max(2, Math.floor(force / 2) + parseDrainPowerModifier(drain))
+}
+
+function drainLevel(spell: SpellRecord, damageLevel: DrainLevel) {
+  if (spell.drain.includes('Damage Level')) return damageLevel
+  const match = spell.drain.match(/\(([LMSD])\)/)
+  return (match?.[1] as DrainLevel | undefined) ?? damageLevel
+}
+
+function stageDrain(level: DrainLevel, successes: number) {
+  const stagedIndex = drainLevels.indexOf(level) - Math.floor(successes / 2)
+  return stagedIndex < 0 ? 'No drain' : `${drainLevels[stagedIndex]} drain`
+}
+
+function suggestedCastingTarget(spell: SpellRecord, stats: MagicalStats) {
+  if (/^\d+/.test(spell.target)) return Number(spell.target.match(/^\d+/)?.[0] ?? 4)
+  if (spell.target.includes('10 - Essence')) return Math.max(2, Math.ceil(10 - stats.essence))
+  if (spell.target.includes('Attribute')) return 4
+  if (spell.target.includes('W')) return stats.willpower || 4
+  if (spell.target.includes('B')) return stats.body || 4
+  if (spell.target.includes('I')) return stats.intelligence || 4
+  if (spell.target.includes('Q')) return stats.quickness || 4
+  if (spell.target.includes('F')) return Math.max(1, stats.magic || 4)
+  return 4
+}
+
+function targetCue(spell: SpellRecord) {
+  if (spell.target.includes('(R)')) return 'Target resists; compare net successes after resistance.'
+  if (spell.target.includes('(T)')) return 'Threshold spell; successes must exceed the listed threshold before the effect lands.'
+  if (spell.target.includes('(V)')) return 'Voluntary target spell; confirm the subject is willing.'
+  if (spell.target.includes('(RC)')) return 'Ranged-combat spell; resolve the attack-like targeting step before effect/drain.'
+  return 'Use the listed target number/context and spell description.'
+}
+
+function effectCue(spell: SpellRecord, force: number, stats: MagicalStats) {
+  const cues = [targetCue(spell)]
+  if (spell.range.includes('(A)')) cues.push(`Area radius is usually Force in meters: ${force}m at Force ${force}.`)
+  if (spell.duration === 'S') cues.push('If kept active, mark it sustained so the app tracks the +2 TN penalty.')
+  if (spell.duration === 'P') cues.push('Permanent spell: sustain until the effect sets, then it no longer counts as sustained.')
+  if (spell.category === 'Detection') cues.push(`Detection sense range baseline: Force x Magic = ${force * Math.max(0, stats.magic)} meters; extended versions may use x10 if applicable.`)
+  if (spell.category === 'Health' && spell.target.includes('Essence')) cues.push(`Current Essence ${stats.essence} suggests a 10 - Essence TN of ${Math.max(2, Math.ceil(10 - stats.essence))}.`)
+  if (spell.category === 'Combat') cues.push('Choose the Damage Level before casting; net successes stage/resolve per SR3 combat spell rules.')
+  if (spell.group.includes('Elemental')) cues.push('Elemental manipulations use ranged-combat handling and physical elemental side effects.')
+  return cues
 }
 
 function normalizeText(value: string) {
@@ -401,6 +493,8 @@ function App() {
   const pinnedSpells = state.pinnedSpellIds.map((id) => spellsById.get(id)).filter((spell): spell is SpellRecord => Boolean(spell))
   const selectedIsPinned = selectedSpell ? state.pinnedSpellIds.includes(selectedSpell.id) : false
   const selectedForce = selectedSpell ? state.pinnedSpellForces[selectedSpell.id] ?? 1 : 1
+  const activeSustainedSpells = state.activeSustainedSpellIds.map((id) => spellsById.get(id)).filter((spell): spell is SpellRecord => Boolean(spell))
+  const sustainingPenalty = activeSustainedSpells.length * 2
 
   function updateRollInputs(mode: CalculatorMode, patch: Partial<RollInputs>) {
     setState((current) => ({ ...current, [mode]: { ...current[mode], ...patch } }))
@@ -417,6 +511,29 @@ function App() {
     }))
   }
 
+  function updateWorkbench(patch: Partial<CastingWorkbench>) {
+    setState((current) => ({ ...current, castingWorkbench: { ...current.castingWorkbench, ...patch } }))
+  }
+
+  function addRoll(entry: Omit<RollEntry, 'id' | 'timestamp'>) {
+    const nextEntry: RollEntry = {
+      ...entry,
+      id: crypto.randomUUID(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }
+    setState((current) => ({ ...current, history: [nextEntry, ...current.history].slice(0, 12) }))
+  }
+
+  function toggleSustained(spellId: string) {
+    setState((current) => {
+      const isActive = current.activeSustainedSpellIds.includes(spellId)
+      return {
+        ...current,
+        activeSustainedSpellIds: isActive ? current.activeSustainedSpellIds.filter((id) => id !== spellId) : [...current.activeSustainedSpellIds, spellId],
+      }
+    })
+  }
+
   function pinSpell(spellId: string) {
     setState((current) => {
       const nextForces = { ...current.pinnedSpellForces, [spellId]: current.pinnedSpellForces[spellId] ?? 1 }
@@ -428,12 +545,17 @@ function App() {
   function unpinSpell(spellId: string) {
     setState((current) => {
       const { [spellId]: _removed, ...remainingForces } = current.pinnedSpellForces
-      return { ...current, pinnedSpellIds: current.pinnedSpellIds.filter((id) => id !== spellId), pinnedSpellForces: remainingForces }
+      return {
+        ...current,
+        pinnedSpellIds: current.pinnedSpellIds.filter((id) => id !== spellId),
+        pinnedSpellForces: remainingForces,
+        activeSustainedSpellIds: current.activeSustainedSpellIds.filter((id) => id !== spellId),
+      }
     })
   }
 
   function clearPinnedSpells() {
-    setState({ ...state, pinnedSpellIds: [], pinnedSpellForces: {} })
+    setState({ ...state, pinnedSpellIds: [], pinnedSpellForces: {}, activeSustainedSpellIds: [] })
   }
 
   function roll(mode: CalculatorMode) {
@@ -449,7 +571,36 @@ function App() {
       successes: countSuccesses(dice, targetNumber),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }
-    setState((current) => ({ ...current, history: [entry, ...current.history].slice(0, 8) }))
+    setState((current) => ({ ...current, history: [entry, ...current.history].slice(0, 12) }))
+  }
+
+  function rollCasting(spell: SpellRecord, force: number) {
+    const dicePool = Math.max(1, state.magicalStats.sorcery + state.castingWorkbench.spellPoolToCast)
+    const targetNumber = clampInteger(state.castingWorkbench.castingTarget + state.castingWorkbench.castingModifiers + sustainingPenalty, 2, 6)
+    const dice = rollD6Pool(dicePool)
+    const successes = countSuccesses(dice, targetNumber)
+    updateWorkbench({ lastCastingSuccesses: successes })
+    addRoll({ mode: 'sorcery', label: `Cast ${spell.name} F${force}`, dice, targetNumber, successes, spellName: spell.name, force, note: `Casting roll. Spell Pool to cast: ${state.castingWorkbench.spellPoolToCast}; sustaining penalty: +${sustainingPenalty} TN.` })
+  }
+
+  function rollResistance(spell: SpellRecord, force: number) {
+    const dicePool = Math.max(1, state.castingWorkbench.resistanceDice)
+    const targetNumber = clampInteger(state.castingWorkbench.resistanceTarget, 2, 6)
+    const dice = rollD6Pool(dicePool)
+    const successes = countSuccesses(dice, targetNumber)
+    updateWorkbench({ lastResistanceSuccesses: successes })
+    addRoll({ mode: 'resistance', label: `Resist ${spell.name} F${force}`, dice, targetNumber, successes, spellName: spell.name, force, note: 'Target resistance roll; subtract from casting successes where applicable.' })
+  }
+
+  function rollDrain(spell: SpellRecord, force: number) {
+    const dicePool = Math.max(1, state.castingWorkbench.drainDice + state.castingWorkbench.spellPoolToDrain)
+    const targetNumber = drainPower(force, spell.drain)
+    const dice = rollD6Pool(dicePool)
+    const successes = countSuccesses(dice, targetNumber)
+    const level = drainLevel(spell, state.castingWorkbench.damageLevel)
+    const staged = stageDrain(level, successes)
+    updateWorkbench({ lastDrainSuccesses: successes })
+    addRoll({ mode: 'drain', label: `Drain ${spell.name} F${force}`, dice, targetNumber, successes, spellName: spell.name, force, note: `${level} base drain stages to ${staged}. ${force > state.magicalStats.magic ? 'Force exceeds Magic: drain is Physical.' : 'Drain is Stun unless another rule says otherwise.'}` })
   }
 
   async function importFromWikiPage() {
@@ -479,6 +630,7 @@ function App() {
           pinnedSpellForces: nextForces,
           selectedSpellId: matches[0]?.id ?? current.selectedSpellId,
           magicalStats: { ...current.magicalStats, ...importedStats },
+          castingWorkbench: { ...current.castingWorkbench, drainDice: importedStats.willpower ?? current.castingWorkbench.drainDice },
         }
       })
       const statCount = Object.keys(importedStats).length
@@ -582,6 +734,20 @@ function App() {
             <p className="eyebrow">dice engine</p>
             <h2>Sorcery + Conjuring</h2>
           </div>
+          <CastingWorkflow
+            spell={selectedSpell}
+            force={selectedForce}
+            stats={state.magicalStats}
+            workbench={state.castingWorkbench}
+            activeSustainedSpells={activeSustainedSpells}
+            sustainingPenalty={sustainingPenalty}
+            isSustainedActive={state.activeSustainedSpellIds.includes(selectedSpell.id)}
+            onWorkbenchChange={updateWorkbench}
+            onRollCasting={rollCasting}
+            onRollResistance={rollResistance}
+            onRollDrain={rollDrain}
+            onToggleSustained={() => toggleSustained(selectedSpell.id)}
+          />
           <RollerCard
             mode="sorcery"
             title="Sorcery casting"
@@ -642,7 +808,8 @@ function App() {
                 <article key={entry.id} className="history-entry">
                   <div>
                     <strong>{entry.label}</strong>
-                    <span>{entry.timestamp} · TN {entry.targetNumber} · {entry.successes} success{entry.successes === 1 ? '' : 'es'}</span>
+                    <span>{entry.timestamp} · TN {entry.targetNumber} · {entry.successes} success{entry.successes === 1 ? '' : 'es'}{entry.force ? ` · Force ${entry.force}` : ''}</span>
+                    {entry.note && <small>{entry.note}</small>}
                   </div>
                   <code>{entry.dice.join(' ')}</code>
                 </article>
@@ -652,6 +819,104 @@ function App() {
         </div>
       </section>
     </main>
+  )
+}
+
+function CastingWorkflow({ spell, force, stats, workbench, activeSustainedSpells, sustainingPenalty, isSustainedActive, onWorkbenchChange, onRollCasting, onRollResistance, onRollDrain, onToggleSustained }: {
+  spell: SpellRecord
+  force: number
+  stats: MagicalStats
+  workbench: CastingWorkbench
+  activeSustainedSpells: SpellRecord[]
+  sustainingPenalty: number
+  isSustainedActive: boolean
+  onWorkbenchChange: (patch: Partial<CastingWorkbench>) => void
+  onRollCasting: (spell: SpellRecord, force: number) => void
+  onRollResistance: (spell: SpellRecord, force: number) => void
+  onRollDrain: (spell: SpellRecord, force: number) => void
+  onToggleSustained: () => void
+}) {
+  const castDice = Math.max(1, stats.sorcery + workbench.spellPoolToCast)
+  const drainDice = Math.max(1, workbench.drainDice + workbench.spellPoolToDrain)
+  const finalCastingTarget = clampInteger(workbench.castingTarget + workbench.castingModifiers + sustainingPenalty, 2, 6)
+  const baseDrainLevel = drainLevel(spell, workbench.damageLevel)
+  const drainTarget = drainPower(force, spell.drain)
+  const netSuccesses = workbench.lastCastingSuccesses === null ? null : Math.max(0, workbench.lastCastingSuccesses - (workbench.lastResistanceSuccesses ?? 0))
+
+  return (
+    <section className="cast-workflow">
+      <div className="panel-header compact">
+        <div>
+          <p className="eyebrow">cast workflow</p>
+          <h2>{spell.name} · Force {force}</h2>
+        </div>
+        <button className="ghost-button" onClick={() => onWorkbenchChange({ castingTarget: suggestedCastingTarget(spell, stats), drainDice: stats.willpower || workbench.drainDice })}>Use spell defaults</button>
+      </div>
+
+      <div className="workflow-summary">
+        <span>Cast dice: <b>{castDice}</b></span>
+        <span>Final casting TN: <b>{finalCastingTarget}</b></span>
+        <span>Drain: <b>{drainTarget}{baseDrainLevel}</b></span>
+        <span>Sustaining penalty: <b>+{sustainingPenalty} TN</b></span>
+      </div>
+
+      <div className="mini-grid workflow-grid">
+        <label>
+          Spell Pool to cast
+          <input type="number" min="0" max={stats.spellPool} value={workbench.spellPoolToCast} onChange={(event) => onWorkbenchChange({ spellPoolToCast: clampInteger(Number(event.target.value), 0, stats.spellPool) })} />
+        </label>
+        <label>
+          Spell Pool held for drain
+          <input type="number" min="0" max={stats.spellPool} value={workbench.spellPoolToDrain} onChange={(event) => onWorkbenchChange({ spellPoolToDrain: clampInteger(Number(event.target.value), 0, stats.spellPool) })} />
+        </label>
+        <label>
+          Casting target
+          <input type="number" min="2" max="12" value={workbench.castingTarget} onChange={(event) => onWorkbenchChange({ castingTarget: Number(event.target.value) })} />
+        </label>
+        <label>
+          Casting modifiers
+          <input type="number" min="-6" max="12" value={workbench.castingModifiers} onChange={(event) => onWorkbenchChange({ castingModifiers: Number(event.target.value) })} />
+        </label>
+        <label>
+          Target resistance dice
+          <input type="number" min="0" max="40" value={workbench.resistanceDice} onChange={(event) => onWorkbenchChange({ resistanceDice: Number(event.target.value) })} />
+        </label>
+        <label>
+          Resistance TN
+          <input type="number" min="2" max="12" value={workbench.resistanceTarget} onChange={(event) => onWorkbenchChange({ resistanceTarget: Number(event.target.value) })} />
+        </label>
+        <label>
+          Drain dice
+          <input type="number" min="1" max="40" value={workbench.drainDice} onChange={(event) => onWorkbenchChange({ drainDice: Number(event.target.value) })} />
+        </label>
+        <label>
+          Damage / variable drain level
+          <select value={workbench.damageLevel} onChange={(event) => onWorkbenchChange({ damageLevel: event.target.value as DrainLevel })}>
+            {drainLevels.map((level) => <option key={level} value={level}>{level}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div className="workflow-actions">
+        <button onClick={() => onRollCasting(spell, force)}>Roll cast {castDice}D6</button>
+        <button className="ghost-button" onClick={() => onRollResistance(spell, force)} disabled={workbench.resistanceDice <= 0}>Roll resistance</button>
+        <button className="ghost-button" onClick={() => onRollDrain(spell, force)}>Roll drain {drainDice}D6</button>
+        <button className="ghost-button" onClick={onToggleSustained} disabled={spell.duration !== 'S'}>{isSustainedActive ? 'Drop sustained spell' : 'Mark sustained'}</button>
+      </div>
+
+      <div className="workflow-results">
+        <span>Cast successes: <b>{workbench.lastCastingSuccesses ?? '—'}</b></span>
+        <span>Resistance successes: <b>{workbench.lastResistanceSuccesses ?? '—'}</b></span>
+        <span>Net successes: <b>{netSuccesses ?? '—'}</b></span>
+        <span>Drain result: <b>{workbench.lastDrainSuccesses === null ? '—' : stageDrain(baseDrainLevel, workbench.lastDrainSuccesses)}</b></span>
+      </div>
+
+      <div className="effect-cues">
+        {effectCue(spell, force, stats).map((cue) => <p key={cue}>{cue}</p>)}
+        {force > stats.magic && <p className="danger-note">Force {force} exceeds Magic {stats.magic}: drain is Physical.</p>}
+        {activeSustainedSpells.length > 0 && <p>Active sustained spells: {activeSustainedSpells.map((activeSpell) => activeSpell.name).join(', ')}.</p>}
+      </div>
+    </section>
   )
 }
 

@@ -354,7 +354,8 @@ h3 {
   font-size: 0.78rem;
 }
 
-.drain-note {
+.drain-note,
+.danger-note {
   margin: 0.9rem 0 0;
   border: 1px solid rgba(255, 133, 210, 0.18);
   border-radius: 16px;
@@ -362,6 +363,66 @@ h3 {
   background: rgba(255, 133, 210, 0.05);
   padding: 0.75rem;
   font-size: 0.9rem;
+}
+
+.cast-workflow {
+  margin-bottom: 1rem;
+  border: 1px solid rgba(128, 255, 234, 0.16);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 1rem;
+}
+
+.workflow-summary,
+.workflow-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+}
+
+.workflow-summary span,
+.workflow-results span {
+  border: 1px solid rgba(128, 255, 234, 0.14);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.13);
+  padding: 0.65rem;
+  color: #d8c8e8;
+}
+
+.workflow-summary b,
+.workflow-results b {
+  color: #80ffea;
+}
+
+.workflow-grid {
+  margin-bottom: 0.85rem;
+}
+
+.workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+}
+
+.effect-cues {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.effect-cues p {
+  margin: 0;
+  border-left: 3px solid rgba(128, 255, 234, 0.42);
+  color: #dbc9ef;
+  background: rgba(128, 255, 234, 0.045);
+  padding: 0.6rem 0.75rem;
+}
+
+.history-entry small {
+  color: #bfaed4;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 label {
@@ -656,8 +717,14 @@ button:disabled {
 
   .stat-rack,
   .mini-grid,
-  .owned-row {
+  .owned-row,
+  .workflow-summary,
+  .workflow-results {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-actions {
+    flex-direction: column;
   }
 
   .tooltip-field::after,
