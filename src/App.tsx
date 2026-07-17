@@ -9,6 +9,33 @@ declare const __SOURCE_COMMIT__: string
 
 type CalculatorMode = 'sorcery' | 'conjuring'
 
+type MagicalStatKey =
+  | 'sorcery'
+  | 'conjuring'
+  | 'spellPool'
+  | 'willpower'
+  | 'charisma'
+  | 'intelligence'
+  | 'magic'
+  | 'essence'
+  | 'body'
+  | 'quickness'
+  | 'reaction'
+
+interface MagicalStats {
+  sorcery: number
+  conjuring: number
+  spellPool: number
+  willpower: number
+  charisma: number
+  intelligence: number
+  magic: number
+  essence: number
+  body: number
+  quickness: number
+  reaction: number
+}
+
 interface RollEntry {
   id: string
   mode: CalculatorMode
@@ -20,12 +47,14 @@ interface RollEntry {
 }
 
 interface SpellGuideState {
-  version: 2
+  version: 3
   query: string
   selectedCategory: 'All' | SpellCategory
   selectedSpellId: string
   pinnedSpellIds: string[]
+  pinnedSpellForces: Record<string, number>
   importPageUrl: string
+  magicalStats: MagicalStats
   sorcery: RollInputs
   conjuring: RollInputs
   history: RollEntry[]
@@ -41,13 +70,43 @@ interface RollInputs {
 
 const categoryOptions: Array<'All' | SpellCategory> = ['All', 'Combat', 'Detection', 'Health', 'Illusion', 'Manipulation']
 
+const magicalStatFields: Array<{ key: MagicalStatKey, label: string, hint: string, step?: number }> = [
+  { key: 'sorcery', label: 'Sorcery', hint: 'Primary spellcasting skill. Use this for casting tests; add Spell Pool dice when allocated.' },
+  { key: 'conjuring', label: 'Conjuring', hint: 'Primary spirit summoning/banishing/binding skill.' },
+  { key: 'spellPool', label: 'Spell Pool', hint: 'Dice that may be allocated to spellcasting or Sorcery drain resistance under SR3 rules.' },
+  { key: 'willpower', label: 'Willpower', hint: 'Sorcery drain resistance attribute and common mana-spell resistance attribute.' },
+  { key: 'charisma', label: 'Charisma', hint: 'Conjuring drain resistance attribute and spirit-facing social/magical baseline.' },
+  { key: 'intelligence', label: 'Intelligence', hint: 'Common illusion/detection target or resistance attribute; also relevant to many perception-adjacent checks.' },
+  { key: 'magic', label: 'Magic', hint: 'Magic attribute. If spell or spirit Force exceeds Magic, drain can become Physical instead of Stun.' },
+  { key: 'essence', label: 'Essence', hint: 'Used by many Health spells through 10 - Essence target numbers.', step: 0.01 },
+  { key: 'body', label: 'Body', hint: 'Common physical spell resistance attribute and target-code reference.' },
+  { key: 'quickness', label: 'Quickness', hint: 'Used by some spell target codes, restraints, and movement-related effects.' },
+  { key: 'reaction', label: 'Reaction', hint: 'Used by reaction/reflex spells and some combat timing contexts.' },
+]
+
+const seedMagicalStats: MagicalStats = {
+  sorcery: 0,
+  conjuring: 0,
+  spellPool: 0,
+  willpower: 0,
+  charisma: 0,
+  intelligence: 0,
+  magic: 0,
+  essence: 6,
+  body: 0,
+  quickness: 0,
+  reaction: 0,
+}
+
 const seedState: SpellGuideState = {
-  version: 2,
+  version: 3,
   query: '',
   selectedCategory: 'All',
   selectedSpellId: spellCatalogue[0]?.id ?? '',
   pinnedSpellIds: [],
+  pinnedSpellForces: {},
   importPageUrl: 'https://hanclintoclaw-pixel.github.io/campaign-wiki/PCs/Valgaut.html',
+  magicalStats: seedMagicalStats,
   sorcery: {
     dicePool: 6,
     baseTarget: 4,
@@ -77,16 +136,24 @@ function isRollInputs(value: unknown): value is RollInputs {
   )
 }
 
+function isMagicalStats(value: unknown): value is MagicalStats {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<MagicalStats>
+  return magicalStatFields.every((field) => typeof candidate[field.key] === 'number')
+}
+
 function isSpellGuideState(value: unknown): value is SpellGuideState {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<SpellGuideState>
   return (
-    candidate.version === 2
+    candidate.version === 3
     && typeof candidate.query === 'string'
     && typeof candidate.selectedCategory === 'string'
     && typeof candidate.selectedSpellId === 'string'
     && Array.isArray(candidate.pinnedSpellIds)
+    && Boolean(candidate.pinnedSpellForces)
     && typeof candidate.importPageUrl === 'string'
+    && isMagicalStats(candidate.magicalStats)
     && isRollInputs(candidate.sorcery)
     && isRollInputs(candidate.conjuring)
     && Array.isArray(candidate.history)
@@ -119,11 +186,77 @@ function normalizeText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-function extractVisibleText(html: string) {
+function parseWikiHtml(html: string) {
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
   doc.querySelectorAll('script, style, nav, footer').forEach((node) => node.remove())
-  return normalizeText(doc.body.textContent ?? '')
+  return doc
+}
+
+function htmlToText(html: string) {
+  return parseWikiHtml(html).body.textContent ?? ''
+}
+
+function extractSpellCandidateText(html: string) {
+  const doc = parseWikiHtml(html)
+  const chunks: string[] = []
+  let inSpellSection = false
+  const nodes = [...doc.body.querySelectorAll('h1, h2, h3, h4, p, li, td')]
+
+  for (const node of nodes) {
+    const text = (node.textContent ?? '').trim()
+    if (!text) continue
+    const tag = node.tagName.toLowerCase()
+    const isHeading = ['h1', 'h2', 'h3', 'h4'].includes(tag)
+
+    if (isHeading) {
+      inSpellSection = /\b(known\s+spells?|spell\s+list|spells?|grimoire)\b/i.test(text) && !/spell\s+guide/i.test(text)
+      continue
+    }
+
+    if (inSpellSection || /^\s*(known\s+)?spells?\s*[:=-]/i.test(text)) {
+      chunks.push(text)
+    }
+  }
+
+  return chunks.join('\n')
+}
+
+function extractNumberForLabels(text: string, labels: string[]) {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const patterns = [
+      new RegExp(`\\b${escaped}\\b\\s*[:=]?\\s*(?:\\*\\*)?(-?\\d+(?:\\.\\d+)?)`, 'i'),
+      new RegExp(`\\*\\*${escaped}\\*\\*\\s*[:=]?\\s*(-?\\d+(?:\\.\\d+)?)`, 'i'),
+    ]
+    for (const pattern of patterns) {
+      const match = text.match(pattern)
+      if (match) return Number(match[1])
+    }
+  }
+  return null
+}
+
+function extractMagicalStats(text: string) {
+  const statMap: Array<{ key: MagicalStatKey, labels: string[] }> = [
+    { key: 'sorcery', labels: ['Sorcery'] },
+    { key: 'conjuring', labels: ['Conjuring'] },
+    { key: 'spellPool', labels: ['Spell Pool', 'SpellPool'] },
+    { key: 'willpower', labels: ['WIL', 'Willpower'] },
+    { key: 'charisma', labels: ['CHA', 'Charisma'] },
+    { key: 'intelligence', labels: ['INT', 'Intelligence'] },
+    { key: 'magic', labels: ['Magic'] },
+    { key: 'essence', labels: ['Essence'] },
+    { key: 'body', labels: ['BOD', 'Body'] },
+    { key: 'quickness', labels: ['QUI', 'Quickness'] },
+    { key: 'reaction', labels: ['Reaction'] },
+  ]
+  const found: Partial<MagicalStats> = {}
+  for (const item of statMap) {
+    const value = extractNumberForLabels(text, item.labels)
+    if (value !== null) found[item.key] = value
+  }
+  return found
 }
 
 const typeDescriptions: Record<string, string> = {
@@ -231,6 +364,15 @@ function TooltipChip({ children, tooltip }: { children: string, tooltip: string 
   return <span className="tooltip-chip" tabIndex={0} data-tooltip={tooltip} aria-label={`${children}. ${tooltip}`}>{children}</span>
 }
 
+function ForceInput({ spellId, force, onChange }: { spellId: string, force: number, onChange: (spellId: string, force: number) => void }) {
+  return (
+    <label className="force-input">
+      Force
+      <input type="number" min="1" max="30" value={force} onChange={(event) => onChange(spellId, Number(event.target.value))} />
+    </label>
+  )
+}
+
 function App() {
   const [state, setState] = useState<SpellGuideState>(() => {
     try {
@@ -258,20 +400,40 @@ function App() {
   const selectedSpell = spellsById.get(state.selectedSpellId) ?? filteredSpells[0] ?? spellCatalogue[0]
   const pinnedSpells = state.pinnedSpellIds.map((id) => spellsById.get(id)).filter((spell): spell is SpellRecord => Boolean(spell))
   const selectedIsPinned = selectedSpell ? state.pinnedSpellIds.includes(selectedSpell.id) : false
+  const selectedForce = selectedSpell ? state.pinnedSpellForces[selectedSpell.id] ?? 1 : 1
 
   function updateRollInputs(mode: CalculatorMode, patch: Partial<RollInputs>) {
     setState((current) => ({ ...current, [mode]: { ...current[mode], ...patch } }))
   }
 
+  function updateMagicalStat(key: MagicalStatKey, value: number) {
+    setState((current) => ({ ...current, magicalStats: { ...current.magicalStats, [key]: Number.isFinite(value) ? value : 0 } }))
+  }
+
+  function updateSpellForce(spellId: string, force: number) {
+    setState((current) => ({
+      ...current,
+      pinnedSpellForces: { ...current.pinnedSpellForces, [spellId]: clampInteger(force, 1, 30) },
+    }))
+  }
+
   function pinSpell(spellId: string) {
     setState((current) => {
-      if (current.pinnedSpellIds.includes(spellId)) return current
-      return { ...current, pinnedSpellIds: [...current.pinnedSpellIds, spellId] }
+      const nextForces = { ...current.pinnedSpellForces, [spellId]: current.pinnedSpellForces[spellId] ?? 1 }
+      if (current.pinnedSpellIds.includes(spellId)) return { ...current, pinnedSpellForces: nextForces }
+      return { ...current, pinnedSpellIds: [...current.pinnedSpellIds, spellId], pinnedSpellForces: nextForces }
     })
   }
 
   function unpinSpell(spellId: string) {
-    setState((current) => ({ ...current, pinnedSpellIds: current.pinnedSpellIds.filter((id) => id !== spellId) }))
+    setState((current) => {
+      const { [spellId]: _removed, ...remainingForces } = current.pinnedSpellForces
+      return { ...current, pinnedSpellIds: current.pinnedSpellIds.filter((id) => id !== spellId), pinnedSpellForces: remainingForces }
+    })
+  }
+
+  function clearPinnedSpells() {
+    setState({ ...state, pinnedSpellIds: [], pinnedSpellForces: {} })
   }
 
   function roll(mode: CalculatorMode) {
@@ -295,18 +457,32 @@ function App() {
     try {
       const response = await fetch(state.importPageUrl)
       if (!response.ok) throw new Error(`Wiki page returned ${response.status}`)
-      const pageText = extractVisibleText(await response.text())
-      const matches = spellCatalogue.filter((spell) => pageText.includes(normalizeText(spell.name)))
-      if (matches.length === 0) {
-        setImportNotice('No catalogue spell names found on that page.')
+      const html = await response.text()
+      const rawPageText = htmlToText(html)
+      const spellCandidateText = normalizeText(extractSpellCandidateText(html))
+      const matches = spellCandidateText ? spellCatalogue.filter((spell) => spellCandidateText.includes(normalizeText(spell.name))) : []
+      const importedStats = extractMagicalStats(rawPageText)
+      if (matches.length === 0 && Object.keys(importedStats).length === 0) {
+        setImportNotice('No catalogue spell names or magical stats found on that page.')
         return
       }
       setState((current) => {
         const merged = new Set(current.pinnedSpellIds)
-        matches.forEach((spell) => merged.add(spell.id))
-        return { ...current, pinnedSpellIds: Array.from(merged), selectedSpellId: matches[0].id }
+        const nextForces = { ...current.pinnedSpellForces }
+        matches.forEach((spell) => {
+          merged.add(spell.id)
+          nextForces[spell.id] ??= 1
+        })
+        return {
+          ...current,
+          pinnedSpellIds: Array.from(merged),
+          pinnedSpellForces: nextForces,
+          selectedSpellId: matches[0]?.id ?? current.selectedSpellId,
+          magicalStats: { ...current.magicalStats, ...importedStats },
+        }
       })
-      setImportNotice(`Imported ${matches.length} matching spell${matches.length === 1 ? '' : 's'} from the wiki page.`)
+      const statCount = Object.keys(importedStats).length
+      setImportNotice(`Imported ${matches.length} matching spell${matches.length === 1 ? '' : 's'} and ${statCount} stat${statCount === 1 ? '' : 's'} from the wiki page.`)
     } catch (error) {
       console.error(error)
       setImportNotice(error instanceof Error ? error.message : 'Import failed.')
@@ -359,6 +535,8 @@ function App() {
           {selectedSpell && (
             <SpellCard
               spell={selectedSpell}
+              force={selectedForce}
+              forceControl={selectedIsPinned ? <ForceInput spellId={selectedSpell.id} force={selectedForce} onChange={updateSpellForce} /> : null}
               action={selectedIsPinned ? <button className="ghost-button" onClick={() => unpinSpell(selectedSpell.id)}>Unpin</button> : <button onClick={() => pinSpell(selectedSpell.id)}>Pin to character</button>}
             />
           )}
@@ -369,17 +547,20 @@ function App() {
                 <p className="eyebrow">owned spells</p>
                 <h2>{pinnedSpells.length} pinned</h2>
               </div>
-              <button className="ghost-button" onClick={() => setState({ ...state, pinnedSpellIds: [] })} disabled={pinnedSpells.length === 0}>Clear list</button>
+              <button className="ghost-button" onClick={clearPinnedSpells} disabled={pinnedSpells.length === 0}>Clear list</button>
             </div>
             {pinnedSpells.length === 0 ? (
               <p className="muted">Pin a spell from the preview above, or import spell names from a character page.</p>
             ) : (
               <div className="owned-list">
                 {pinnedSpells.map((spell) => (
-                  <button key={spell.id} className="owned-pill" onClick={() => setState({ ...state, selectedSpellId: spell.id })}>
-                    <span>{spell.name}</span>
-                    <small>{spell.category} · {spell.drain}</small>
-                  </button>
+                  <article key={spell.id} className="owned-row">
+                    <button className="owned-pill" onClick={() => setState({ ...state, selectedSpellId: spell.id })}>
+                      <span>{spell.name}</span>
+                      <small>{spell.category} · {spell.drain}</small>
+                    </button>
+                    <ForceInput spellId={spell.id} force={state.pinnedSpellForces[spell.id] ?? 1} onChange={updateSpellForce} />
+                  </article>
                 ))}
               </div>
             )}
@@ -391,7 +572,7 @@ function App() {
               Character page URL
               <input value={state.importPageUrl} onChange={(event) => setState({ ...state, importPageUrl: event.target.value })} />
             </label>
-            <button onClick={importFromWikiPage}>Import matching spell names</button>
+            <button onClick={importFromWikiPage}>Import matching spell names + stats</button>
             {importNotice && <p className="notice">{importNotice}</p>}
           </section>
         </div>
@@ -401,8 +582,27 @@ function App() {
             <p className="eyebrow">dice engine</p>
             <h2>Sorcery + Conjuring</h2>
           </div>
-          <RollerCard mode="sorcery" title="Sorcery casting" inputs={state.sorcery} onChange={updateRollInputs} onRoll={roll} />
-          <RollerCard mode="conjuring" title="Conjuring service / drain" inputs={state.conjuring} onChange={updateRollInputs} onRoll={roll} />
+          <RollerCard
+            mode="sorcery"
+            title="Sorcery casting"
+            inputs={state.sorcery}
+            suggestedDice={state.magicalStats.sorcery + state.magicalStats.spellPool}
+            drainAttribute={`Willpower ${state.magicalStats.willpower}`}
+            onUseSuggested={() => updateRollInputs('sorcery', { dicePool: state.magicalStats.sorcery + state.magicalStats.spellPool, drainTarget: Math.max(2, Math.floor(selectedForce / 2)) })}
+            onChange={updateRollInputs}
+            onRoll={roll}
+          />
+          <RollerCard
+            mode="conjuring"
+            title="Conjuring service / drain"
+            inputs={state.conjuring}
+            suggestedDice={state.magicalStats.conjuring}
+            drainAttribute={`Charisma ${state.magicalStats.charisma}`}
+            onUseSuggested={() => updateRollInputs('conjuring', { dicePool: state.magicalStats.conjuring, drainTarget: Math.max(2, Math.floor(selectedForce / 2)) })}
+            onChange={updateRollInputs}
+            onRoll={roll}
+          />
+          <p className="drain-note">Selected/pinned Force {selectedForce}; Magic {state.magicalStats.magic}. Force above Magic can make drain Physical under SR3 drain rules.</p>
         </div>
       </section>
 
@@ -414,9 +614,19 @@ function App() {
             <p className="muted">Pinned spells will appear here as the character’s working spell list.</p>
           ) : (
             <div className="spell-list compact-list">
-              {pinnedSpells.map((spell) => <SpellCard key={spell.id} spell={spell} action={<button className="ghost-button" onClick={() => unpinSpell(spell.id)}>Remove</button>} />)}
+              {pinnedSpells.map((spell) => (
+                <SpellCard
+                  key={spell.id}
+                  spell={spell}
+                  force={state.pinnedSpellForces[spell.id] ?? 1}
+                  forceControl={<ForceInput spellId={spell.id} force={state.pinnedSpellForces[spell.id] ?? 1} onChange={updateSpellForce} />}
+                  action={<button className="ghost-button" onClick={() => unpinSpell(spell.id)}>Remove</button>}
+                />
+              ))}
             </div>
           )}
+
+          <MagicalStatsPanel stats={state.magicalStats} onChange={updateMagicalStat} />
         </div>
 
         <div className="panel history-panel">
@@ -445,16 +655,17 @@ function App() {
   )
 }
 
-function SpellCard({ spell, action }: { spell: SpellRecord, action?: ReactNode }) {
+function SpellCard({ spell, force, forceControl, action }: { spell: SpellRecord, force?: number, forceControl?: ReactNode, action?: ReactNode }) {
   return (
     <article className="spell-card">
       <header>
         <div>
           <p className="spell-type">{spell.category} · {spell.group} · {spell.type}</p>
-          <h3>{spell.name}</h3>
+          <h3>{spell.name}{force ? <span className="force-badge">Force {force}</span> : null}</h3>
         </div>
         <div className="card-actions">
           <span className="citation-chip">{spell.source}</span>
+          {forceControl}
           {action}
         </div>
       </header>
@@ -474,10 +685,32 @@ function SpellCard({ spell, action }: { spell: SpellRecord, action?: ReactNode }
   )
 }
 
-function RollerCard({ mode, title, inputs, onChange, onRoll }: {
+function MagicalStatsPanel({ stats, onChange }: { stats: MagicalStats, onChange: (key: MagicalStatKey, value: number) => void }) {
+  return (
+    <section className="magic-stats-panel">
+      <p className="eyebrow">magical stats</p>
+      <h2>Character casting profile</h2>
+      <p className="muted">Set manually, or import from a wiki character page. These values feed quick dice-pool buttons and drain reminders.</p>
+      <div className="magic-stat-grid">
+        {magicalStatFields.map((field) => (
+          <label key={field.key} className="magic-stat-input">
+            <span>{field.label}</span>
+            <input type="number" step={field.step ?? 1} value={stats[field.key]} onChange={(event) => onChange(field.key, Number(event.target.value))} />
+            <small>{field.hint}</small>
+          </label>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function RollerCard({ mode, title, inputs, suggestedDice, drainAttribute, onUseSuggested, onChange, onRoll }: {
   mode: CalculatorMode
   title: string
   inputs: RollInputs
+  suggestedDice: number
+  drainAttribute: string
+  onUseSuggested: () => void
   onChange: (mode: CalculatorMode, patch: Partial<RollInputs>) => void
   onRoll: (mode: CalculatorMode) => void
 }) {
@@ -486,7 +719,10 @@ function RollerCard({ mode, title, inputs, onChange, onRoll }: {
 
   return (
     <article className="roller-card">
-      <h3>{title}</h3>
+      <div className="roller-heading">
+        <h3>{title}</h3>
+        <button className="ghost-button" onClick={onUseSuggested} disabled={suggestedDice <= 0}>Use character dice ({suggestedDice})</button>
+      </div>
       <label>
         Label
         <input value={inputs.label} onChange={(event) => onChange(mode, { label: event.target.value })} />
@@ -512,7 +748,7 @@ function RollerCard({ mode, title, inputs, onChange, onRoll }: {
       <div className="roll-footer">
         <div>
           <strong>Final TN {targetNumber}</strong>
-          <span>Expected hits: {expected.toFixed(2)} · Drain note TN {inputs.drainTarget}</span>
+          <span>Expected hits: {expected.toFixed(2)} · Drain note TN {inputs.drainTarget} · Resist with {drainAttribute}</span>
         </div>
         <button onClick={() => onRoll(mode)}>Roll {inputs.dicePool}D6</button>
       </div>

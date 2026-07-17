@@ -245,15 +245,26 @@ h3 {
 
 .owned-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.75rem;
+}
+
+.owned-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5rem;
   gap: 0.55rem;
+  align-items: end;
+  border: 1px solid rgba(128, 255, 234, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.65rem;
 }
 
 .owned-pill {
   display: grid;
   justify-items: start;
   gap: 0.18rem;
-  border-radius: 16px;
+  border-radius: 14px;
   color: #f7ecff;
   background: rgba(128, 255, 234, 0.08);
   padding: 0.75rem;
@@ -262,6 +273,26 @@ h3 {
 
 .owned-pill small {
   color: #bfaed4;
+}
+
+.force-input {
+  min-width: 4.5rem;
+}
+
+.force-input input {
+  padding: 0.56rem;
+}
+
+.force-badge {
+  display: inline-flex;
+  margin-left: 0.55rem;
+  border: 1px solid rgba(255, 133, 210, 0.32);
+  border-radius: 999px;
+  color: #ffb9df;
+  background: rgba(255, 133, 210, 0.09);
+  padding: 0.16rem 0.5rem;
+  font-size: 0.78rem;
+  vertical-align: middle;
 }
 
 .compact-list .spell-card {
@@ -279,6 +310,58 @@ h3 {
 .card-actions button {
   padding: 0.48rem 0.7rem;
   font-size: 0.78rem;
+}
+
+.magic-stats-panel {
+  margin-top: 1.1rem;
+  border: 1px solid rgba(128, 255, 234, 0.14);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 1rem;
+}
+
+.magic-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.magic-stat-input {
+  border: 1px solid rgba(240, 92, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.12);
+  padding: 0.7rem;
+}
+
+.magic-stat-input small {
+  color: #bfaed4;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
+  text-transform: none;
+}
+
+.roller-heading {
+  display: flex;
+  gap: 0.75rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.roller-heading button {
+  padding: 0.48rem 0.7rem;
+  font-size: 0.78rem;
+}
+
+.drain-note {
+  margin: 0.9rem 0 0;
+  border: 1px solid rgba(255, 133, 210, 0.18);
+  border-radius: 16px;
+  color: #dbc9ef;
+  background: rgba(255, 133, 210, 0.05);
+  padding: 0.75rem;
+  font-size: 0.9rem;
 }
 
 label {
@@ -565,13 +648,15 @@ button:disabled {
   .hero-links,
   .history-entry,
   .spell-card header,
-  .card-actions {
+  .card-actions,
+  .roller-heading {
     align-items: stretch;
     flex-direction: column;
   }
 
   .stat-rack,
-  .mini-grid {
+  .mini-grid,
+  .owned-row {
     grid-template-columns: 1fr;
   }
 
